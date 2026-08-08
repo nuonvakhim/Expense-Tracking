@@ -147,7 +147,7 @@ const App: React.FC = () => {
           nextDueDate: advance(new Date(data.date), data.frequency).toISOString(),
           type: data.type,
         });
-        setRecurringExpenses(prev => [ExpenseTracker...prev, rule]);
+        setRecurringExpenses(prev => [...prev, rule]);
       }
     } catch (err) {
       setError(describeError(err));
@@ -231,7 +231,7 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-xl font-bold from-blue-600 to-purple-600 bg-clip-text text-transparent">
             ExpenseTracker V1
           </h1>
           <div className="flex gap-2">

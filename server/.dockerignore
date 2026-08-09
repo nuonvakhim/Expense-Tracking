@@ -1,0 +1,11 @@
+node_modules
+dist
+
+# Never bake credentials into an image layer — pass them at run time.
+.env
+.env.*
+!.env.example
+
+npm-debug.log*
+*.md
+.git

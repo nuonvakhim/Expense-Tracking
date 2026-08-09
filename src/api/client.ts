@@ -1,7 +1,6 @@
 import type { Expense, RecurrenceFrequency, RecurringExpense, TransactionType } from '../../types';
 
-const EXPENSES_KEY = 'expenses';
-const RECURRING_KEY = 'recurring';
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'https://api.vakhim-dev.site').replace(/\/+$/, '');
 
 export class ApiError extends Error {
     readonly status: number;
@@ -39,111 +38,53 @@ interface ListResponse<T> {
     total: number;
 }
 
-function read<T>(key: string): T[] {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    let res: Response;
     try {
-        const raw = localStorage.getItem(key);
-        if (!raw) return [];
-        const parsed: unknown = JSON.parse(raw);
-        return Array.isArray(parsed) ? (parsed as T[]) : [];
-    } catch {
-        return [];
+        res = await fetch(`${BASE_URL}${path}`, {
+            ...init,
+            headers: { 'Content-Type': 'application/json', ...init?.headers },
+        });
+    } catch (err) {
+        throw new ApiError(0, err instanceof Error ? err.message : 'Network error');
     }
-}
 
-function write<T>(key: string, data: T[]): void {
-    localStorage.setItem(key, JSON.stringify(data));
-}
+    if (res.status === 204) return undefined as T;
 
-function newId(): string {
-    return crypto.randomUUID();
-}
+    const body: unknown = await res.json().catch(() => undefined);
 
-function notFound(entity: string): never {
-    throw new ApiError(404, `${entity} not found`);
-}
+    if (!res.ok) {
+        const message =
+            body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+                ? body.error
+                : `Request failed with status ${res.status}`;
+        const details = body && typeof body === 'object' && 'details' in body ? body.details : undefined;
+        throw new ApiError(res.status, message, details);
+    }
 
-function conflict(message: string): never {
-    throw new ApiError(409, message);
+    return body as T;
 }
 
 export const api = {
-    listTransactions: async (): Promise<ListResponse<Expense>> => {
-        const data = read<Expense>(EXPENSES_KEY);
-        return { data, total: data.length };
-    },
+    listTransactions: (): Promise<ListResponse<Expense>> => request('/api/transactions'),
 
-    createTransaction: async (input: NewTransaction): Promise<Expense> => {
-        const expenses = read<Expense>(EXPENSES_KEY);
-        const id = input.id ?? newId();
-        if (expenses.some((e) => e.id === id)) conflict('Transaction already exists');
+    createTransaction: (input: NewTransaction): Promise<Expense> =>
+        request('/api/transactions', { method: 'POST', body: JSON.stringify(input) }),
 
-        const created: Expense = {
-            id,
-            amount: input.amount,
-            category: input.category,
-            description: input.description,
-            date: input.date,
-            type: input.type,
-        };
-        write(EXPENSES_KEY, [created, ...expenses]);
-        return created;
-    },
+    updateTransaction: (id: string, patch: Partial<NewTransaction>): Promise<Expense> =>
+        request(`/api/transactions/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
 
-    updateTransaction: async (id: string, patch: Partial<NewTransaction>): Promise<Expense> => {
-        const expenses = read<Expense>(EXPENSES_KEY);
-        const index = expenses.findIndex((e) => e.id === id);
-        if (index === -1) notFound('Transaction');
+    deleteTransaction: (id: string): Promise<void> =>
+        request(`/api/transactions/${id}`, { method: 'DELETE' }),
 
-        const updated: Expense = { ...expenses[index], ...patch, id };
-        expenses[index] = updated;
-        write(EXPENSES_KEY, expenses);
-        return updated;
-    },
+    listRecurring: (): Promise<{ data: RecurringExpense[] }> => request('/api/recurring'),
 
-    deleteTransaction: async (id: string): Promise<void> => {
-        const expenses = read<Expense>(EXPENSES_KEY);
-        const next = expenses.filter((e) => e.id !== id);
-        if (next.length === expenses.length) notFound('Transaction');
-        write(EXPENSES_KEY, next);
-    },
+    createRecurring: (input: NewRecurring): Promise<RecurringExpense> =>
+        request('/api/recurring', { method: 'POST', body: JSON.stringify(input) }),
 
-    listRecurring: async (): Promise<{ data: RecurringExpense[] }> => ({
-        data: read<RecurringExpense>(RECURRING_KEY),
-    }),
+    updateRecurring: (id: string, patch: Partial<NewRecurring>): Promise<RecurringExpense> =>
+        request(`/api/recurring/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
 
-    createRecurring: async (input: NewRecurring): Promise<RecurringExpense> => {
-        const rules = read<RecurringExpense>(RECURRING_KEY);
-        const id = input.id ?? newId();
-        if (rules.some((r) => r.id === id)) conflict('Recurring rule already exists');
-
-        const created: RecurringExpense = {
-            id,
-            amount: input.amount,
-            category: input.category,
-            description: input.description,
-            frequency: input.frequency,
-            nextDueDate: input.nextDueDate,
-            type: input.type,
-        };
-        write(RECURRING_KEY, [...rules, created]);
-        return created;
-    },
-
-    updateRecurring: async (id: string, patch: Partial<NewRecurring>): Promise<RecurringExpense> => {
-        const rules = read<RecurringExpense>(RECURRING_KEY);
-        const index = rules.findIndex((r) => r.id === id);
-        if (index === -1) notFound('Recurring rule');
-
-        const updated: RecurringExpense = { ...rules[index], ...patch, id };
-        rules[index] = updated;
-        write(RECURRING_KEY, rules);
-        return updated;
-    },
-
-    deleteRecurring: async (id: string): Promise<void> => {
-        const rules = read<RecurringExpense>(RECURRING_KEY);
-        const next = rules.filter((r) => r.id !== id);
-        if (next.length === rules.length) notFound('Recurring rule');
-        write(RECURRING_KEY, next);
-    },
+    deleteRecurring: (id: string): Promise<void> =>
+        request(`/api/recurring/${id}`, { method: 'DELETE' }),
 };

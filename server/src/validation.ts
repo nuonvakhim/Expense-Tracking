@@ -84,13 +84,22 @@ export const email = z
 
 /**
  * Length is the only rule. Composition rules ("one digit, one symbol") shrink
- * the search space users actually pick from and push them toward `Password1!`;
- * a 12-character minimum with no other constraints is the current guidance.
+ * the search space users actually pick from and push them toward `Password1!`.
  * The 200-character cap bounds hashing work per request.
+ *
+ * The 6-character floor is a deliberate usability choice, below the 12 that
+ * current guidance recommends. What it costs is resistance to an *offline*
+ * attack: if the database is ever dumped, a 6-character password is within reach
+ * of brute force. Online guessing is still covered by the per-account rate limit
+ * in auth/middleware.ts, and scrypt's 64 MiB cost per attempt keeps even offline
+ * cracking slow — but raise this if the data ever warrants it, since
+ * verifyPassword reads each hash's own parameters and old hashes keep working.
  */
+const MIN_PASSWORD_LENGTH = 6;
+
 export const password = z
     .string()
-    .min(12, 'must be at least 12 characters')
+    .min(MIN_PASSWORD_LENGTH, `must be at least ${MIN_PASSWORD_LENGTH} characters`)
     .max(200, 'must be at most 200 characters');
 
 export const registerSchema = z.object({ email, password });

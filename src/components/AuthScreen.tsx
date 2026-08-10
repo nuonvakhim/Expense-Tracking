@@ -8,8 +8,8 @@ interface AuthScreenProps {
 
 type Mode = 'LOGIN' | 'REGISTER';
 
-/** Mirrors the server's rule in server/src/validation.ts. */
-const MIN_PASSWORD_LENGTH = 12;
+/** Mirrors the server's rule in server/src/validation.ts — keep the two in step. */
+const MIN_PASSWORD_LENGTH = 6;
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<Mode>('LOGIN');
@@ -134,7 +134,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onAuthenticated }) => {
               {isRegister && (
                 <p className="text-[10px] text-slate-400 mt-1">
                   At least {MIN_PASSWORD_LENGTH} characters. Length beats symbols — a short
-                  phrase works well.
+                  phrase is stronger than a mangled word.
                 </p>
               )}
             </div>

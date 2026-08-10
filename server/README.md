@@ -47,7 +47,7 @@ decision a migration should make on its own.
 | `DATABASE_URL`                  | yes      | —                       | Startup fails loudly if unset                                            |
 | `DATABASE_SSL`                  | no       | `false`                 | Set `true` for Neon/Supabase/Heroku/RDS                                  |
 | `PORT`                          | no       | `4000`                  |                                                                          |
-| `CORS_ORIGIN`                   | no       | `http://localhost:3000` | Comma-separated exact origins. **Cannot be `*`** — the API sends cookies |
+| `CORS_ORIGINS`                   | no       | `http://localhost:3000` | Comma-separated exact origins. **Cannot be `*`** — the API sends cookies |
 | `NODE_ENV`                      | no       | `development`           | `production` turns on HSTS and defaults `COOKIE_SECURE` to true          |
 | `TRUST_PROXY`                   | no       | `false`                 | Set to `1` behind the nginx reverse proxy. See the warning below          |
 | `SESSION_COOKIE_NAME`           | no       | `et_session`            |                                                                          |
@@ -62,7 +62,7 @@ decision a migration should make on its own.
 | `RATE_LIMIT_AUTH_ACCOUNT_MAX`   | no       | `10`                    | Per email address, so many IPs cannot multiply guesses at one account    |
 
 Bad combinations are refused at startup rather than becoming silent holes:
-`CORS_ORIGIN=*`, `COOKIE_SAMESITE=none` without `COOKIE_SECURE`, an origin with a
+`CORS_ORIGINS=*`, `COOKIE_SAMESITE=none` without `COOKIE_SECURE`, an origin with a
 path, a non-boolean boolean, or an out-of-range port all fail fast. Plain-HTTP
 origins and non-secure cookies in production log a warning.
 
@@ -245,8 +245,17 @@ The stored format `scrypt$N$r$p$salt$hash` is self-describing, so cost can be
 raised later and old hashes both still verify and get upgraded transparently on
 the owner's next successful login.
 
-Only length is enforced (12 characters minimum). Composition rules shrink the
+Only length is enforced — **6 characters minimum**. Composition rules shrink the
 space users actually pick from and push them toward `Password1!`.
+
+That floor is lower than the 12 characters current guidance recommends, and the
+trade is worth naming: what it costs is resistance to an **offline** attack on a
+stolen database dump, where 6 characters is within brute-force reach. Online
+guessing is still covered by the per-account rate limit, and scrypt's 64 MiB per
+attempt keeps offline cracking slow. Raising it later is a one-line change in
+[src/validation.ts](src/validation.ts) (mirrored in
+[AuthScreen.tsx](../src/components/AuthScreen.tsx)) — existing accounts keep
+working, since `verifyPassword` reads each hash's own parameters.
 
 ### Not leaking who has an account
 

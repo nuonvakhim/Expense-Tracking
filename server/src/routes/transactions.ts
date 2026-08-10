@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { pool } from '../db.js';
 import { HttpError, notFound } from '../http.js';
 import {
@@ -9,6 +9,20 @@ import {
 } from '../validation.js';
 
 export const transactionsRouter = Router();
+
+/**
+ * Every statement below filters on user_id, and it is always taken from the
+ * session rather than from anything the client sent. That is what makes a
+ * transaction id unguessable-and-irrelevant: quoting another user's id in a URL
+ * yields the same 404 as an id that does not exist.
+ */
+function ownerId(req: Request): string {
+    const id = req.session?.user.id;
+    // requireAuth runs ahead of this router, so a missing session is a wiring
+    // bug. Failing closed beats silently querying across all users.
+    if (!id) throw new HttpError(401, 'Authentication required');
+    return id;
+}
 
 interface TransactionRow {
     id: string;
@@ -41,8 +55,9 @@ const RETURNING = 'id, amount, category, description, date, type, created_at, up
 transactionsRouter.get('/', async (req, res) => {
     const q = listQuerySchema.parse(req.query);
 
-    const where: string[] = [];
-    const params: unknown[] = [];
+    // The owner filter is not optional and is always $1.
+    const params: unknown[] = [ownerId(req)];
+    const where: string[] = ['user_id = $1'];
 
     if (q.type) {
         params.push(q.type);
@@ -61,7 +76,7 @@ transactionsRouter.get('/', async (req, res) => {
         where.push(`date <= $${params.length}`);
     }
 
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     params.push(q.limit);
     const limitParam = `$${params.length}`;
@@ -94,8 +109,8 @@ transactionsRouter.get('/', async (req, res) => {
 transactionsRouter.get('/:id', async (req, res) => {
     const id = uuid.parse(req.params.id);
     const { rows } = await pool.query<TransactionRow>(
-        `SELECT ${RETURNING} FROM transactions WHERE id = $1`,
-        [id],
+        `SELECT ${RETURNING} FROM transactions WHERE id = $1 AND user_id = $2`,
+        [id, ownerId(req)],
     );
     const row = rows[0];
     if (!row) throw notFound('Transaction');
@@ -107,10 +122,18 @@ transactionsRouter.post('/', async (req, res) => {
     const body = createTransactionSchema.parse(req.body);
 
     const { rows } = await pool.query<TransactionRow>(
-        `INSERT INTO transactions (id, amount, category, description, date, type)
-         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6)
+        `INSERT INTO transactions (id, amount, category, description, date, type, user_id)
+         VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7)
          RETURNING ${RETURNING}`,
-        [body.id ?? null, body.amount, body.category, body.description, body.date, body.type],
+        [
+            body.id ?? null,
+            body.amount,
+            body.category,
+            body.description,
+            body.date,
+            body.type,
+            ownerId(req),
+        ],
     );
 
     const row = rows[0];
@@ -135,9 +158,11 @@ transactionsRouter.put('/:id', async (req, res) => {
     }
 
     params.push(id);
+    const idParam = `$${params.length}`;
+    params.push(ownerId(req));
     const { rows } = await pool.query<TransactionRow>(
         `UPDATE transactions SET ${sets.join(', ')}
-         WHERE id = $${params.length}
+         WHERE id = ${idParam} AND user_id = $${params.length}
          RETURNING ${RETURNING}`,
         params,
     );
@@ -150,7 +175,10 @@ transactionsRouter.put('/:id', async (req, res) => {
 /** DELETE /api/transactions/:id */
 transactionsRouter.delete('/:id', async (req, res) => {
     const id = uuid.parse(req.params.id);
-    const { rowCount } = await pool.query('DELETE FROM transactions WHERE id = $1', [id]);
+    const { rowCount } = await pool.query(
+        'DELETE FROM transactions WHERE id = $1 AND user_id = $2',
+        [id, ownerId(req)],
+    );
     if (!rowCount) throw notFound('Transaction');
     res.status(204).end();
 });

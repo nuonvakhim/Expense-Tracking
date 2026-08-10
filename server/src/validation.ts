@@ -64,6 +64,54 @@ export const updateRecurringSchema = createRecurringSchema
     .partial()
     .refine((v) => Object.keys(v).length > 0, 'at least one field must be provided');
 
+/**
+ * Credentials.
+ *
+ * The email pattern is deliberately conservative rather than RFC-5322 complete —
+ * it exists to reject obvious junk, and the 254-character cap matches the
+ * `users.email` CHECK constraint so a long value fails as a 400 rather than a
+ * database error.
+ */
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+export const email = z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(3, 'is required')
+    .max(254, 'is too long')
+    .regex(EMAIL_RE, 'must be a valid email address');
+
+/**
+ * Length is the only rule. Composition rules ("one digit, one symbol") shrink
+ * the search space users actually pick from and push them toward `Password1!`;
+ * a 12-character minimum with no other constraints is the current guidance.
+ * The 200-character cap bounds hashing work per request.
+ */
+export const password = z
+    .string()
+    .min(12, 'must be at least 12 characters')
+    .max(200, 'must be at most 200 characters');
+
+export const registerSchema = z.object({ email, password });
+
+// No minimum on login: an old or short password must still be able to sign in,
+// and rejecting it here would tell an attacker the format is wrong.
+export const loginSchema = z.object({
+    email: z.string().trim().toLowerCase().min(1, 'is required').max(254),
+    password: z.string().min(1, 'is required').max(200),
+});
+
+export const changePasswordSchema = z
+    .object({
+        currentPassword: z.string().min(1, 'is required').max(200),
+        newPassword: password,
+    })
+    .refine((v) => v.currentPassword !== v.newPassword, {
+        message: 'must differ from the current password',
+        path: ['newPassword'],
+    });
+
 export const listQuerySchema = z.object({
     type: transactionType.optional(),
     category: category.optional(),
@@ -73,6 +121,9 @@ export const listQuerySchema = z.object({
     offset: z.coerce.number().int().min(0).default(0),
 });
 
+export type Register = z.infer<typeof registerSchema>;
+export type Login = z.infer<typeof loginSchema>;
+export type ChangePassword = z.infer<typeof changePasswordSchema>;
 export type CreateTransaction = z.infer<typeof createTransactionSchema>;
 export type UpdateTransaction = z.infer<typeof updateTransactionSchema>;
 export type CreateRecurring = z.infer<typeof createRecurringSchema>;

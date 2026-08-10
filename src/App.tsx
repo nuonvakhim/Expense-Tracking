@@ -7,7 +7,8 @@ import FinancialSummary from './components/FinancialSummary';
 import EditExpenseModal from './components/EditExpenseModal';
 import SettingsModal from './components/SettingsModal';
 import RecurringExpensesModal from './components/RecurringExpensesModal';
-import { api, ApiError } from './api/client';
+import AuthScreen from './components/AuthScreen';
+import { api, ApiError, setUnauthorizedHandler, type AuthUser } from './api/client';
 import { processDueRecurring } from './api/sync';
 import {
     type Expense,
@@ -59,17 +60,40 @@ const advance = (from: Date, frequency: RecurrenceFrequency): Date => {
 type TimeFilter = 'TODAY' | 'WEEK' | 'MONTH' | 'ALL';
 type BudgetPeriod = 'DAILY' | 'MONTHLY';
 
+// Defaults are riel-scaled (roughly the old $100 / $3,000 at ~4,000៛ to USD).
+const DEFAULT_DAILY_LIMIT = 400_000;
+const DEFAULT_MONTHLY_LIMIT = 12_000_000;
+
+// Budget limits stay client-side, but they are now namespaced per account: on a
+// shared browser, one person's limits must not surface in another's session.
+const limitKey = (userId: string, which: 'daily' | 'monthly') =>
+  `expense_tracker:${userId}:${which}_limit`;
+
+// Keys used before accounts existed. The first account to sign in on this
+// browser inherits them, and they are removed at that point so no later account
+// can pick up someone else's numbers.
+const LEGACY_KEYS = { daily: 'gemini_daily_limit', monthly: 'gemini_monthly_limit' } as const;
+
+const readLimit = (userId: string, which: 'daily' | 'monthly', fallback: number): number => {
+  const stored = localStorage.getItem(limitKey(userId, which)) ?? localStorage.getItem(LEGACY_KEYS[which]);
+  const value = stored === null ? NaN : parseFloat(stored);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
 const App: React.FC = () => {
-  // Records are persisted in localStorage.
+  // Session
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isAuthResolving, setIsAuthResolving] = useState(true);
+
+  // Records live in Postgres, scoped to the signed-in account.
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Budget State
-  // Defaults are riel-scaled (roughly the old $100 / $3,000 at ~4,000៛ to USD).
-  const [dailyLimit, setDailyLimit] = useState(400_000);
-  const [monthlyLimit, setMonthlyLimit] = useState(12_000_000);
+  const [dailyLimit, setDailyLimit] = useState(DEFAULT_DAILY_LIMIT);
+  const [monthlyLimit, setMonthlyLimit] = useState(DEFAULT_MONTHLY_LIMIT);
   const [budgetPeriod, setBudgetPeriod] = useState<BudgetPeriod>('DAILY');
 
   // Filter State
@@ -81,22 +105,64 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRecurringOpen, setIsRecurringOpen] = useState(false);
 
-  // StrictMode runs effects twice in dev. Bootstrap writes to the database,
-  // so it must run exactly once.
-  const didBootstrap = useRef(false);
+  // StrictMode runs effects twice in dev. Session resolution and bootstrap both
+  // write (bootstrap posts due recurring rows), so each must run exactly once.
+  const didResolveSession = useRef(false);
+  const bootstrappedFor = useRef<string | null>(null);
 
+  // The session cookie is httpOnly, so the only way to know whether one is still
+  // valid is to ask. A 401 here simply means "show the login screen".
   useEffect(() => {
-    if (didBootstrap.current) return;
-    didBootstrap.current = true;
+    if (didResolveSession.current) return;
+    didResolveSession.current = true;
 
-    const storedDaily = localStorage.getItem('gemini_daily_limit');
-    if (storedDaily) setDailyLimit(parseFloat(storedDaily));
+    void (async () => {
+      try {
+        setUser(await api.me());
+      } catch {
+        setUser(null);
+      } finally {
+        setIsAuthResolving(false);
+      }
+    })();
+  }, []);
 
-    const storedMonthly = localStorage.getItem('gemini_monthly_limit');
-    if (storedMonthly) setMonthlyLimit(parseFloat(storedMonthly));
+  // The server can end a session at any time — expiry, logout elsewhere, or a
+  // password change on another device. Drop straight back to the login screen
+  // rather than leaving stale records on screen.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setExpenses([]);
+      setRecurringExpenses([]);
+      setError(null);
+    });
+    return () => { setUnauthorizedHandler(null); };
+  }, []);
+
+  // Load this account's data once it is known.
+  useEffect(() => {
+    if (!user) {
+      bootstrappedFor.current = null;
+      return;
+    }
+    if (bootstrappedFor.current === user.id) return;
+    bootstrappedFor.current = user.id;
+
+    const daily = readLimit(user.id, 'daily', DEFAULT_DAILY_LIMIT);
+    const monthly = readLimit(user.id, 'monthly', DEFAULT_MONTHLY_LIMIT);
+    setDailyLimit(daily);
+    setMonthlyLimit(monthly);
+
+    // Write the resolved values under this account's keys before dropping the
+    // pre-accounts keys, so a value inherited from them is not lost on reload.
+    localStorage.setItem(limitKey(user.id, 'daily'), daily.toString());
+    localStorage.setItem(limitKey(user.id, 'monthly'), monthly.toString());
+    localStorage.removeItem(LEGACY_KEYS.daily);
+    localStorage.removeItem(LEGACY_KEYS.monthly);
 
     void bootstrap();
-  }, []);
+  }, [user]);
 
   const bootstrap = async () => {
     setIsLoading(true);
@@ -119,11 +185,22 @@ const App: React.FC = () => {
     }
   };
 
-  // Persist limits
-  useEffect(() => {
-    localStorage.setItem('gemini_daily_limit', dailyLimit.toString());
-    localStorage.setItem('gemini_monthly_limit', monthlyLimit.toString());
-  }, [dailyLimit, monthlyLimit]);
+  const handleSignOut = async () => {
+    // Revokes the session server-side, so the cookie is useless even if it was
+    // captured. Local state is cleared either way.
+    try {
+      await api.logout();
+    } finally {
+      setUser(null);
+      setExpenses([]);
+      setRecurringExpenses([]);
+      setError(null);
+      setIsSettingsOpen(false);
+      setIsRecurringOpen(false);
+      setEditingExpense(null);
+    }
+  };
+
 
   const addExpense = async (data: { amount: number; category: string; description: string; date: string; type: TransactionType; isRecurring?: boolean; frequency?: RecurrenceFrequency }) => {
     setError(null);
@@ -196,7 +273,32 @@ const App: React.FC = () => {
   const handleSaveSettings = (newDaily: number, newMonthly: number) => {
     setDailyLimit(newDaily);
     setMonthlyLimit(newMonthly);
+    // Written here rather than in an effect on [dailyLimit, monthlyLimit]: such
+    // an effect also fires on the render where `user` changes, and would persist
+    // the outgoing account's values under the incoming account's key first.
+    if (user) {
+      localStorage.setItem(limitKey(user.id, 'daily'), newDaily.toString());
+      localStorage.setItem(limitKey(user.id, 'monthly'), newMonthly.toString());
+    }
   };
+
+  // Nothing renders until we know whether there is a session — showing the app
+  // shell first and the login screen a moment later would flash private-looking
+  // chrome at a signed-out visitor.
+  if (isAuthResolving) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400">
+        <svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthScreen onAuthenticated={setUser} />;
+  }
 
   // Filter Logic
   const filteredExpenses = expenses.filter(e => {
@@ -254,6 +356,16 @@ const App: React.FC = () => {
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                </svg>
+            </button>
+            <button
+              onClick={() => { void handleSignOut(); }}
+              className="w-10 h-10 rounded-full bg-slate-50 hover:bg-red-50 border border-slate-200 hover:border-red-200 flex items-center justify-center text-slate-600 hover:text-red-600 transition-colors"
+              aria-label={`Sign out of ${user.email}`}
+              title={`Signed in as ${user.email} — sign out`}
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
             </button>
           </div>
         </div>

@@ -12,16 +12,22 @@
     "start": "node dist/index.js",
     "migrate": "tsx src/migrate.ts",
     "migrate:prod": "node dist/migrate.js",
+    "claim": "tsx src/claim.ts",
+    "claim:prod": "node dist/claim.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
     "pg": "^8.16.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.10.1",

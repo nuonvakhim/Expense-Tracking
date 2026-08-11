@@ -4,16 +4,41 @@ import {ExpenseCategory, IncomeCategory, type RecurrenceFrequency, type Transact
 import { CURRENCY_SYMBOL, normalizeAmount } from '../utils/currency';
 
 interface AddExpenseProps {
-  onAdd: (expense: { 
-    amount: number; 
-    category: string; 
-    description: string; 
+  onAdd: (expense: {
+    amount: number;
+    category: string;
+    description: string;
     date: string;
     type: TransactionType;
     isRecurring?: boolean;
     frequency?: RecurrenceFrequency;
   }) => void | Promise<void>;
 }
+
+// `datetime-local` speaks local wall-clock time, so the UTC offset has to be
+// folded in before slicing — otherwise the field shows a time hours off.
+const toDateInput = (d: Date): string => {
+    const local = new Date(d);
+    local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+    return local.toISOString().slice(0, 16);
+};
+
+// Backdating keeps the current time of day: a receipt from yesterday belongs at
+// roughly this hour, not at midnight, and it keeps list ordering sensible.
+const daysAgoInput = (days: number): string => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return toDateInput(d);
+};
+
+const isSameDay = (a: Date, b: Date) =>
+    a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+
+const DATE_SHORTCUTS: { label: string; daysAgo: number }[] = [
+    { label: 'Today', daysAgo: 0 },
+    { label: 'Yesterday', daysAgo: 1 },
+    { label: '1 week ago', daysAgo: 7 },
+];
 
 const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
     const [entryType, setEntryType] = useState<TransactionType>('EXPENSE');
@@ -22,6 +47,8 @@ const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
     const [amount, setAmount] = useState('');
     const [description, setDescription] = useState('');
     const [category, setCategory] = useState<string>(ExpenseCategory.FOOD);
+    // Defaults to now; the picker below lets it be backdated.
+    const [date, setDate] = useState(() => toDateInput(new Date()));
 
     // Recurring State
     const [isRecurring, setIsRecurring] = useState(false);
@@ -33,6 +60,11 @@ const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
         e.preventDefault();
         if (!amount || !description || isSaving) return;
 
+        // An empty or half-typed date field must not throw on toISOString();
+        // fall back to now, which is what the field defaults to anyway.
+        const picked = new Date(date);
+        const isoDate = Number.isNaN(picked.getTime()) ? new Date().toISOString() : picked.toISOString();
+
         setIsSaving(true);
         try {
             // Saving now goes over the network, so wait for it to succeed before
@@ -41,7 +73,7 @@ const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
                 amount: normalizeAmount(parseFloat(amount)),
                 description,
                 category,
-                date: new Date().toISOString(),
+                date: isoDate,
                 type: entryType,
                 isRecurring,
                 frequency: isRecurring ? frequency : undefined
@@ -56,6 +88,7 @@ const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
         // Reset
         setAmount('');
         setDescription('');
+        setDate(toDateInput(new Date()));
         setIsRecurring(false);
         setFrequency('MONTHLY');
         // Reset category to default for current type
@@ -138,6 +171,40 @@ const AddExpense: React.FC<AddExpenseProps> = ({ onAdd }) => {
                                     <option key={cat} value={cat}>{cat}</option>
                                 ))}
                             </select>
+                        </div>
+
+                        {/* Date — defaults to now, backdatable for entries logged late */}
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wider">Date</label>
+                            <div className="flex gap-1 mb-2">
+                                {DATE_SHORTCUTS.map(({ label, daysAgo }) => {
+                                    const target = new Date();
+                                    target.setDate(target.getDate() - daysAgo);
+                                    const selected = new Date(date);
+                                    const isActive = !Number.isNaN(selected.getTime()) && isSameDay(selected, target);
+                                    return (
+                                        <button
+                                            key={label}
+                                            type="button"
+                                            onClick={() => setDate(daysAgoInput(daysAgo))}
+                                            className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                                                isActive
+                                                    ? 'bg-blue-50 border-blue-200 text-blue-600'
+                                                    : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <input
+                                type="datetime-local"
+                                value={date}
+                                onChange={(e) => setDate(e.target.value)}
+                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                                required
+                            />
                         </div>
 
                         {/* Recurring Toggle */}

@@ -9,6 +9,7 @@ import SettingsModal from './components/SettingsModal';
 import RecurringExpensesModal from './components/RecurringExpensesModal';
 import AuthScreen from './components/AuthScreen';
 import TimeFilterTabs, { type TimeFilter } from './components/TimeFilterTabs';
+import BottomNav, { type MainTab } from './components/BottomNav';
 import { api, ApiError, setUnauthorizedHandler, type AuthUser } from './api/client';
 import { processDueRecurring } from './api/sync';
 import {
@@ -58,7 +59,6 @@ const advance = (from: Date, frequency: RecurrenceFrequency): Date => {
   return d;
 };
 
-type MainTab = 'HOME' | 'HISTORY';
 type BudgetPeriod = 'DAILY' | 'MONTHLY';
 
 // Defaults are riel-scaled (roughly the old $100 / $3,000 at ~4,000៛ to USD).
@@ -74,11 +74,6 @@ const limitKey = (userId: string, which: 'daily' | 'monthly') =>
 // browser inherits them, and they are removed at that point so no later account
 // can pick up someone else's numbers.
 const LEGACY_KEYS = { daily: 'gemini_daily_limit', monthly: 'gemini_monthly_limit' } as const;
-
-const TABS: { id: MainTab; label: string; icon: string }[] = [
-  { id: 'HOME', label: 'Home', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
-  { id: 'HISTORY', label: 'History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
-];
 
 const readLimit = (userId: string, which: 'daily' | 'monthly', fallback: number): number => {
   const stored = localStorage.getItem(limitKey(userId, which)) ?? localStorage.getItem(LEGACY_KEYS[which]);
@@ -467,36 +462,7 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom tab bar */}
-      <nav
-        role="tablist"
-        aria-label="Sections"
-        className="fixed bottom-0 inset-x-0 z-20 bg-white/95 backdrop-blur border-t border-slate-200"
-      >
-        <div className="max-w-md mx-auto px-4 py-2 flex">
-          {TABS.map(({ id, label, icon }) => {
-            const isActive = activeTab === id;
-            return (
-              <button
-                key={id}
-                id={`tab-${id.toLowerCase()}`}
-                role="tab"
-                aria-selected={isActive}
-                aria-controls={`panel-${id.toLowerCase()}`}
-                onClick={() => setActiveTab(id)}
-                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-colors ${
-                  isActive ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />
-                </svg>
-                <span className="text-[11px] font-bold">{label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      <BottomNav active={activeTab} onChange={setActiveTab} />
 
       {/* Modals */}
       <EditExpenseModal

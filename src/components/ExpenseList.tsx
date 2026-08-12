@@ -1,6 +1,7 @@
 import React from 'react';
 import {CATEGORY_COLORS, type Expense} from "../../types.ts";
-import { CURRENCY_SYMBOL, formatCurrency } from '../utils/currency';
+import { formatCurrency } from '../utils/currency';
+import CategoryIcon from './CategoryIcon';
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -34,11 +35,12 @@ const ExpenseList: React.FC<ExpenseListProps> = ({ expenses, onDelete, onEdit })
             className="group flex items-center justify-between p-4 bg-white rounded-xl border border-slate-100 shadow-sm hover:shadow-md transition-all"
           >
             <div className="flex items-center gap-4 overflow-hidden">
-              <div 
-                className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0"
                 style={{ backgroundColor: CATEGORY_COLORS[expense.category] || (isIncome ? '#10b981' : '#cbd5e1') }}
+                title={expense.category}
               >
-                {isIncome ? `+ ${CURRENCY_SYMBOL}` : expense.category.charAt(0)}
+                <CategoryIcon category={expense.category} type={expense.type} />
               </div>
               <div className="min-w-0">
                 <h4 className="font-medium text-slate-900 truncate pr-2">{expense.description}</h4>

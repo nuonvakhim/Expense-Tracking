@@ -8,6 +8,7 @@ import EditExpenseModal from './components/EditExpenseModal';
 import SettingsModal from './components/SettingsModal';
 import RecurringExpensesModal from './components/RecurringExpensesModal';
 import AuthScreen from './components/AuthScreen';
+import TimeFilterTabs, { type TimeFilter } from './components/TimeFilterTabs';
 import { api, ApiError, setUnauthorizedHandler, type AuthUser } from './api/client';
 import { processDueRecurring } from './api/sync';
 import {
@@ -57,7 +58,7 @@ const advance = (from: Date, frequency: RecurrenceFrequency): Date => {
   return d;
 };
 
-type TimeFilter = 'TODAY' | 'WEEK' | 'MONTH' | 'ALL';
+type MainTab = 'HOME' | 'HISTORY';
 type BudgetPeriod = 'DAILY' | 'MONTHLY';
 
 // Defaults are riel-scaled (roughly the old $100 / $3,000 at ~4,000៛ to USD).
@@ -73,6 +74,11 @@ const limitKey = (userId: string, which: 'daily' | 'monthly') =>
 // browser inherits them, and they are removed at that point so no later account
 // can pick up someone else's numbers.
 const LEGACY_KEYS = { daily: 'gemini_daily_limit', monthly: 'gemini_monthly_limit' } as const;
+
+const TABS: { id: MainTab; label: string; icon: string }[] = [
+  { id: 'HOME', label: 'Home', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
+  { id: 'HISTORY', label: 'History', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
+];
 
 const readLimit = (userId: string, which: 'daily' | 'monthly', fallback: number): number => {
   const stored = localStorage.getItem(limitKey(userId, which)) ?? localStorage.getItem(LEGACY_KEYS[which]);
@@ -99,6 +105,9 @@ const App: React.FC = () => {
   // Filter State
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('TODAY');
+
+  // Navigation
+  const [activeTab, setActiveTab] = useState<MainTab>('HOME');
 
   // Modal States
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -195,6 +204,7 @@ const App: React.FC = () => {
       setExpenses([]);
       setRecurringExpenses([]);
       setError(null);
+      setActiveTab('HOME');
       setIsSettingsOpen(false);
       setIsRecurringOpen(false);
       setEditingExpense(null);
@@ -397,75 +407,96 @@ const App: React.FC = () => {
             </svg>
             <p className="text-sm font-medium">Loading your transactions…</p>
           </div>
+        ) : activeTab === 'HOME' ? (
+          <div id="panel-home" role="tabpanel" aria-labelledby="tab-home" className="space-y-6">
+            {/* Period selector — drives the summary below and the History list */}
+            <TimeFilterTabs value={timeFilter} onChange={setTimeFilter} />
+
+            {/* Financial Summary - Shows stats based on current filters */}
+            <FinancialSummary income={totalIncome} expense={totalExpense} />
+
+            {/* Budget Component - Always shows configured budget vs actual spend */}
+            <DailyLimit
+              currentAmount={currentBudgetSpend}
+              limit={budgetPeriod === 'DAILY' ? dailyLimit : monthlyLimit}
+              period={budgetPeriod}
+              onTogglePeriod={setBudgetPeriod}
+            />
+
+            {/* Add Expense */}
+            <section>
+              <h2 className="text-lg font-bold text-slate-800 mb-3">Add Transaction</h2>
+              <AddExpense onAdd={addExpense} />
+            </section>
+          </div>
         ) : (
-          <>
-        {/* Financial Summary - Shows stats based on current filters */}
-        <FinancialSummary income={totalIncome} expense={totalExpense} />
-
-        {/* Budget Component - Always shows configured budget vs actual spend */}
-        <DailyLimit
-          currentAmount={currentBudgetSpend}
-          limit={budgetPeriod === 'DAILY' ? dailyLimit : monthlyLimit}
-          period={budgetPeriod}
-          onTogglePeriod={setBudgetPeriod}
-        />
-
-        {/* Add Expense */}
-        <section>
-          <h2 className="text-lg font-bold text-slate-800 mb-3">Add Transaction</h2>
-          <AddExpense onAdd={addExpense} />
-        </section>
-
-        {/* List Filters */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-             <h2 className="text-lg font-bold text-slate-800">History</h2>
-             <select
-               value={categoryFilter}
-               onChange={(e) => setCategoryFilter(e.target.value)}
-               className="text-sm border border-slate-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 outline-none max-w-[120px]"
-             >
-               <option value="ALL">All Categories</option>
-               {Object.values(ExpenseCategory).map(c => (
-                 <option key={c} value={c}>{c}</option>
-               ))}
-               {Object.values(IncomeCategory).map(c => (
-                 <option key={c} value={c}>{c}</option>
-               ))}
-             </select>
-          </div>
-
-          {/* Time Filter Tabs */}
-          <div className="bg-slate-200/50 p-1 rounded-xl flex gap-1">
-            {(['TODAY', 'WEEK', 'MONTH', 'ALL'] as TimeFilter[]).map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setTimeFilter(tf)}
-                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                  timeFilter === tf
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-slate-500 hover:bg-slate-200'
-                }`}
+          <div id="panel-history" role="tabpanel" aria-labelledby="tab-history" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-800">History</h2>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="text-sm border border-slate-200 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 outline-none max-w-[120px]"
               >
-                {tf}
-              </button>
-            ))}
+                <option value="ALL">All Categories</option>
+                {Object.values(ExpenseCategory).map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+                {Object.values(IncomeCategory).map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+
+            <TimeFilterTabs value={timeFilter} onChange={setTimeFilter} />
+
+            {/* Totals for whatever the filters currently select */}
+            <FinancialSummary income={totalIncome} expense={totalExpense} />
+
+            {/* Chart (Only show expenses) */}
+            {filteredExpenses.some(e => e.type === 'EXPENSE') && (
+              <SummaryChart expenses={filteredExpenses.filter(e => e.type === 'EXPENSE')} />
+            )}
+
+            <ExpenseList
+              expenses={filteredExpenses}
+              onDelete={deleteExpense}
+              onEdit={setEditingExpense}
+            />
           </div>
-
-          {/* Chart (Only show expenses) */}
-          {filteredExpenses.some(e => e.type === 'EXPENSE') && (
-             <SummaryChart expenses={filteredExpenses.filter(e => e.type === 'EXPENSE')} />
-          )}
-
-          <ExpenseList
-            expenses={filteredExpenses}
-            onDelete={deleteExpense}
-            onEdit={setEditingExpense}
-          />
-        </section>
-          </>
         )}
       </main>
+
+      {/* Bottom tab bar */}
+      <nav
+        role="tablist"
+        aria-label="Sections"
+        className="fixed bottom-0 inset-x-0 z-20 bg-white/95 backdrop-blur border-t border-slate-200"
+      >
+        <div className="max-w-md mx-auto px-4 py-2 flex">
+          {TABS.map(({ id, label, icon }) => {
+            const isActive = activeTab === id;
+            return (
+              <button
+                key={id}
+                id={`tab-${id.toLowerCase()}`}
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`panel-${id.toLowerCase()}`}
+                onClick={() => setActiveTab(id)}
+                className={`flex-1 flex flex-col items-center gap-1 py-2 rounded-xl transition-colors ${
+                  isActive ? 'text-blue-600 bg-blue-50' : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />
+                </svg>
+                <span className="text-[11px] font-bold">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* Modals */}
       <EditExpenseModal
